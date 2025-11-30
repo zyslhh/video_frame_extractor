@@ -1,0 +1,5 @@
+{
+  "name": "FrameCraft Pro",
+  "description": "Enterprise-grade video frame extraction tool. Extract high-quality frames, customize output format (JPG/WEBP), adjust compression quality, and batch export with ease.",
+  "requestFramePermissions": []
+}
