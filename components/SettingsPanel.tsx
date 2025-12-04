@@ -1,14 +1,16 @@
 import React from 'react';
 import { ExportSettings, ImageFormat } from '../types';
 import { Settings, Image, FileType, Scaling, Type, ArrowDownUp } from 'lucide-react';
+import { translations } from '../i18n';
 
 interface SettingsPanelProps {
   settings: ExportSettings;
   onChange: (settings: ExportSettings) => void;
   count: number;
+  t: typeof translations.en;
 }
 
-export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange, count }) => {
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange, count, t }) => {
   
   const handleChange = (key: keyof ExportSettings, value: string | number) => {
     onChange({ ...settings, [key]: value });
@@ -18,7 +20,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     <div className="bg-surface rounded-xl border border-slate-700 p-4 h-full">
       <div className="flex items-center space-x-2 mb-6 border-b border-slate-700 pb-4">
         <Settings className="w-5 h-5 text-primary" />
-        <h2 className="font-semibold text-lg text-white">Export Settings</h2>
+        <h2 className="font-semibold text-lg text-white">{t.settingsTitle}</h2>
       </div>
 
       <div className="space-y-6">
@@ -26,7 +28,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <div className="space-y-2">
           <label className="flex items-center text-sm font-medium text-slate-300">
             <FileType className="w-4 h-4 mr-2" />
-            Format
+            {t.format}
           </label>
           <div className="grid grid-cols-2 gap-2">
             {(['image/jpeg', 'image/webp', 'image/png'] as ImageFormat[]).map((fmt) => (
@@ -50,7 +52,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           <div className="flex justify-between items-center">
             <label className="flex items-center text-sm font-medium text-slate-300">
               <Image className="w-4 h-4 mr-2" />
-              Quality
+              {t.quality}
             </label>
             <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
               {Math.round(settings.quality * 100)}%
@@ -66,7 +68,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
             className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
           />
           <p className="text-xs text-slate-500">
-            Higher quality increases file size.
+            {t.qualityHelp}
           </p>
         </div>
 
@@ -75,7 +77,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           <div className="flex justify-between items-center">
             <label className="flex items-center text-sm font-medium text-slate-300">
               <Scaling className="w-4 h-4 mr-2" />
-              Resolution Scale
+              {t.scale}
             </label>
             <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
               {Math.round(settings.scale * 100)}%
@@ -91,7 +93,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
             className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
           />
           <p className="text-xs text-slate-500">
-            Resize output images relative to original video.
+            {t.scaleHelp}
           </p>
         </div>
 
@@ -99,7 +101,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <div className="space-y-2">
           <label className="flex items-center text-sm font-medium text-slate-300">
             <ArrowDownUp className="w-4 h-4 mr-2" />
-            Export Order
+            {t.order}
           </label>
           <div className="grid grid-cols-2 gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700">
              <button
@@ -110,7 +112,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Ascending (Oldest First)
+                {t.asc}
               </button>
               <button
                 onClick={() => handleChange('sortOrder', 'desc')}
@@ -120,7 +122,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Descending (Newest First)
+                {t.desc}
               </button>
           </div>
         </div>
@@ -129,7 +131,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <div className="space-y-2">
           <label className="flex items-center text-sm font-medium text-slate-300">
             <Type className="w-4 h-4 mr-2" />
-            Filename Prefix
+            {t.prefix}
           </label>
           <input
             type="text"
@@ -139,14 +141,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
             placeholder="frame"
           />
           <p className="text-xs text-slate-500">
-            Example output: {settings.prefix}_01.{settings.format.split('/')[1]}
+            {t.prefixHelp}: {settings.prefix}_01.{settings.format.split('/')[1]}
           </p>
         </div>
 
         <div className="pt-4 border-t border-slate-700">
             <div className="bg-slate-800/50 rounded-lg p-3">
                 <p className="text-sm text-slate-400 flex justify-between">
-                    <span>Selected Frames:</span>
+                    <span>{t.count}:</span>
                     <span className="text-white font-semibold">{count}</span>
                 </p>
             </div>

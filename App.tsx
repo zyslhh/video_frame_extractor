@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Camera, Play, Pause, SkipBack, SkipForward, Download, MonitorPlay, Layers } from 'lucide-react';
+import { Upload, Camera, Play, Pause, SkipBack, SkipForward, Download, MonitorPlay, Layers, Loader2, Globe, ChevronDown } from 'lucide-react';
 import { Button } from './components/Button';
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameGallery } from './components/FrameGallery';
 import { AutoCaptureModal } from './components/AutoCaptureModal';
 import { CapturedFrame, ExportSettings } from './types';
 import { formatTime, downloadZip } from './utils';
-import JSZip from 'jszip'; // Ensure jszip is installed or available in environment
+import { translations, Language } from './i18n';
+import JSZip from 'jszip';
 
 const App: React.FC = () => {
   // State
@@ -18,10 +19,17 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   
+  // Language State
+  const [lang, setLang] = useState<Language>('zh');
+  const t = translations[lang];
+
   // Auto Capture State
   const [isAutoCaptureModalOpen, setIsAutoCaptureModalOpen] = useState(false);
   const [isAutoCapturing, setIsAutoCapturing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false); 
+  const [detectedFps, setDetectedFps] = useState<number | null>(null);
   const [autoCaptureProgress, setAutoCaptureProgress] = useState(0);
+  const [autoCaptureCount, setAutoCaptureCount] = useState(0);
   
   const [settings, setSettings] = useState<ExportSettings>({
     format: 'image/jpeg',
@@ -43,17 +51,11 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(file);
       setVideoSrc(url);
       setFrames([]);
-      // Default to "image" prefix as per request, or use filename. Using generic 'image' or file name is optional.
-      // prompt said "image_01.jpg", so defaulting prefix to 'image' is safer, but filename is more useful.
-      // Let's stick to the prompt's implied default of 'image' if the user doesn't change it, 
-      // but usually file name is better. I'll update the initial state above to 'image' and 
-      // here I will NOT overwrite it with filename to strictly follow the "image_01" request vibe,
-      // or I can set it to 'image'. Let's set it to 'image'.
       setSettings(prev => ({ ...prev, prefix: 'image' }));
-      
-      // Reset timestamps
       setCurrentTime(0);
       setDuration(0);
+      setAutoCaptureCount(0);
+      setDetectedFps(null);
     }
   };
 
@@ -69,8 +71,7 @@ const App: React.FC = () => {
   };
 
   const handleTimeUpdate = () => {
-    // Only update state if we are NOT auto capturing to avoid UI jitter/performance issues during batch process
-    if (videoRef.current && !isAutoCapturing) {
+    if (videoRef.current && !isAutoCapturing && !isAnalyzing) {
       setCurrentTime(videoRef.current.currentTime);
     }
   };
@@ -106,7 +107,7 @@ const App: React.FC = () => {
     
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 1.0); // Store high quality initially
+      const dataUrl = canvas.toDataURL('image/jpeg', 1.0); 
       
       const newFrame: CapturedFrame = {
         id: crypto.randomUUID(),
@@ -120,20 +121,102 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // --- Auto Capture Logic ---
+  // --- FPS Detection ---
+  const detectVideoFPS = async (): Promise<number> => {
+      const video = videoRef.current;
+      if (!video || !('requestVideoFrameCallback' in video)) {
+          return 30; // Fallback
+      }
+
+      setIsAnalyzing(true);
+      const wasPlaying = !video.paused;
+      const originalTime = video.currentTime;
+      const originalMuted = video.muted;
+      
+      video.muted = true;
+      video.currentTime = 0; 
+      
+      return new Promise<number>((resolve) => {
+          let handle: number;
+          let frameCount = 0;
+          let lastMediaTime = 0;
+          const diffs: number[] = [];
+          const maxFrames = 20;
+
+          const callback = (now: number, metadata: VideoFrameCallbackMetadata) => {
+              if (frameCount > 0) {
+                  const diff = metadata.mediaTime - lastMediaTime;
+                  if (diff > 0.001) { 
+                      diffs.push(diff);
+                  }
+              }
+              lastMediaTime = metadata.mediaTime;
+              frameCount++;
+
+              if (frameCount < maxFrames) {
+                  handle = video.requestVideoFrameCallback(callback);
+              } else {
+                  finish(diffs);
+              }
+          };
+
+          const finish = (deltas: number[]) => {
+            video.pause();
+            video.currentTime = originalTime;
+            video.muted = originalMuted;
+            if (wasPlaying) video.play();
+            setIsAnalyzing(false);
+
+            if (deltas.length === 0) {
+                resolve(30);
+                return;
+            }
+
+            deltas.sort((a, b) => a - b);
+            const medianDelta = deltas[Math.floor(deltas.length / 2)];
+            const fps = medianDelta > 0 ? Math.round(1 / medianDelta) : 30;
+            resolve(fps);
+          };
+          
+          video.play().then(() => {
+              handle = video.requestVideoFrameCallback(callback);
+          }).catch(e => {
+              console.warn("Autoplay blocked for analysis", e);
+              setIsAnalyzing(false);
+              resolve(30);
+          });
+
+          setTimeout(() => {
+              if (frameCount < maxFrames) {
+                  video.cancelVideoFrameCallback(handle);
+                  finish(diffs);
+              }
+          }, 1500);
+      });
+  };
+
+  const handleOpenBatchModal = async () => {
+      if (!videoRef.current) return;
+      let fps = detectedFps;
+      if (!fps) {
+          fps = await detectVideoFPS();
+          setDetectedFps(fps);
+      }
+      setIsAutoCaptureModalOpen(true);
+  };
+
   const startAutoCapture = async (start: number, end: number, interval: number) => {
     const video = videoRef.current;
     if (!video) return;
 
     setIsAutoCapturing(true);
     setAutoCaptureProgress(0);
+    setAutoCaptureCount(0);
     autoCaptureRef.current.stop = false;
 
-    // Pause video and ensure we are in a clean state
     video.pause();
     setIsPlaying(false);
 
-    // Helper to wait for seek
     const seekTo = (time: number): Promise<void> => {
         return new Promise((resolve) => {
             const onSeeked = () => {
@@ -153,10 +236,8 @@ const App: React.FC = () => {
     try {
         while (currentTimeLoop <= end) {
             if (autoCaptureRef.current.stop) break;
-
             await seekTo(currentTimeLoop);
             
-            // Capture Logic
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
@@ -164,9 +245,8 @@ const App: React.FC = () => {
             
             if (ctx) {
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.95); 
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.90); 
                 
-                // Duplicate Check
                 if (dataUrl !== lastDataUrl) {
                     newFrames.push({
                         id: crypto.randomUUID(),
@@ -176,20 +256,16 @@ const App: React.FC = () => {
                         height: video.videoHeight
                     });
                     lastDataUrl = dataUrl;
+                    setAutoCaptureCount(newFrames.length);
                 }
             }
 
-            // Update Progress
             const progress = totalDuration > 0 ? ((currentTimeLoop - start) / totalDuration) * 100 : 100;
             setAutoCaptureProgress(Math.min(99, progress));
 
             currentTimeLoop += interval;
-            
-            // Small yield to let UI update
-            await new Promise(r => setTimeout(r, 10));
+            await new Promise(r => requestAnimationFrame(r));
         }
-        
-        // Add all at once
         setFrames(prev => [...newFrames.reverse(), ...prev]);
         setAutoCaptureProgress(100);
 
@@ -198,13 +274,8 @@ const App: React.FC = () => {
     } finally {
         setIsAutoCapturing(false);
         setIsAutoCaptureModalOpen(false);
-        // Reset player to start
         video.currentTime = start; 
     }
-  };
-
-  const stopAutoCapture = () => {
-      autoCaptureRef.current.stop = true;
   };
 
   const handleDownloadAll = async () => {
@@ -230,7 +301,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Cleanup object URL
   useEffect(() => {
     return () => {
       if (videoSrc) URL.revokeObjectURL(videoSrc);
@@ -247,11 +317,29 @@ const App: React.FC = () => {
               <MonitorPlay className="w-6 h-6 text-primary" />
             </div>
             <h1 className="text-xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-              FrameCraft Pro
+              {t.appTitle}
             </h1>
           </div>
           
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3">
+            {/* Language Dropdown */}
+            <div className="relative group mr-1">
+                 <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                    <Globe className="h-4 w-4 text-slate-400" />
+                 </div>
+                 <select
+                    value={lang}
+                    onChange={(e) => setLang(e.target.value as Language)}
+                    className="bg-slate-800 border border-slate-700 text-slate-200 text-xs font-bold uppercase rounded-lg block w-[120px] pl-9 pr-8 py-2 cursor-pointer hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none transition-colors"
+                 >
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                 </select>
+                 <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none">
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                 </div>
+            </div>
+
             <input 
               type="file" 
               accept="video/*" 
@@ -263,27 +351,27 @@ const App: React.FC = () => {
               variant="secondary" 
               icon={<Upload className="w-4 h-4" />}
               onClick={() => fileInputRef.current?.click()}
+              disabled={isAnalyzing}
             >
-              Upload
+              {t.upload}
             </Button>
             
-            {/* Batch Extract Button */}
             <Button 
                 variant="secondary"
-                disabled={!videoSrc}
-                icon={<Layers className="w-4 h-4" />}
-                onClick={() => setIsAutoCaptureModalOpen(true)}
+                disabled={!videoSrc || isAnalyzing}
+                icon={isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin"/> : <Layers className="w-4 h-4" />}
+                onClick={handleOpenBatchModal}
             >
-                Batch Extract
+                {isAnalyzing ? t.analyzing : t.batchExtract}
             </Button>
 
             <Button 
               variant="primary" 
-              disabled={frames.length === 0 || isProcessing}
-              icon={isProcessing ? undefined : <Download className="w-4 h-4" />}
+              disabled={frames.length === 0 || isProcessing || isAnalyzing}
+              icon={isProcessing ? <Loader2 className="w-4 h-4 animate-spin"/> : <Download className="w-4 h-4" />}
               onClick={handleDownloadAll}
             >
-              {isProcessing ? 'Processing...' : `Export All (${frames.length})`}
+              {isProcessing ? t.processing : `${t.exportAll} (${frames.length})`}
             </Button>
           </div>
         </div>
@@ -307,9 +395,14 @@ const App: React.FC = () => {
                   onEnded={() => setIsPlaying(false)}
                 />
                 
-                {/* Custom Controls Overlay */}
+                {isAnalyzing && (
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-50">
+                        <Loader2 className="w-10 h-10 text-primary animate-spin mb-3" />
+                        <p className="text-white font-medium">{t.detecting}</p>
+                    </div>
+                )}
+                
                 <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4 transition-opacity duration-300 ${isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`}>
-                  {/* Progress Bar */}
                   <input
                     type="range"
                     min="0"
@@ -317,19 +410,19 @@ const App: React.FC = () => {
                     step="0.01"
                     value={currentTime}
                     onChange={handleSeekChange}
-                    disabled={isAutoCapturing}
+                    disabled={isAutoCapturing || isAnalyzing}
                     className="w-full h-1.5 mb-4 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-primary hover:h-2 transition-all disabled:opacity-50"
                   />
                   
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
-                      <button onClick={() => seek(-1)} disabled={isAutoCapturing} className="text-white hover:text-primary transition disabled:opacity-50">
+                      <button onClick={() => seek(-1)} disabled={isAutoCapturing || isAnalyzing} className="text-white hover:text-primary transition disabled:opacity-50">
                         <SkipBack className="w-5 h-5" />
                       </button>
-                      <button onClick={togglePlay} disabled={isAutoCapturing} className="text-white hover:text-primary transition p-2 bg-white/10 rounded-full disabled:opacity-50">
+                      <button onClick={togglePlay} disabled={isAutoCapturing || isAnalyzing} className="text-white hover:text-primary transition p-2 bg-white/10 rounded-full disabled:opacity-50">
                         {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-1" />}
                       </button>
-                      <button onClick={() => seek(1)} disabled={isAutoCapturing} className="text-white hover:text-primary transition disabled:opacity-50">
+                      <button onClick={() => seek(1)} disabled={isAutoCapturing || isAnalyzing} className="text-white hover:text-primary transition disabled:opacity-50">
                         <SkipForward className="w-5 h-5" />
                       </button>
                       
@@ -337,19 +430,24 @@ const App: React.FC = () => {
                         <span>{formatTime(currentTime)}</span>
                         <span className="text-slate-500">/</span>
                         <span>{formatTime(duration)}</span>
+                        {detectedFps && (
+                             <span className="ml-2 px-2 py-0.5 rounded bg-white/10 text-xs text-blue-300 border border-white/10">
+                                {detectedFps} FPS
+                             </span>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex items-center space-x-4">
                         <button 
                             onClick={changeSpeed} 
-                            disabled={isAutoCapturing}
+                            disabled={isAutoCapturing || isAnalyzing}
                             className="text-xs font-bold text-slate-300 hover:text-white bg-slate-800 px-2 py-1 rounded border border-slate-600 w-12 disabled:opacity-50"
                         >
                             {playbackSpeed}x
                         </button>
-                      <Button onClick={captureFrame} disabled={isAutoCapturing} size="sm" icon={<Camera className="w-4 h-4"/>}>
-                        Capture Frame
+                      <Button onClick={captureFrame} disabled={isAutoCapturing || isAnalyzing} size="sm" icon={<Camera className="w-4 h-4"/>}>
+                        {t.captureFrame}
                       </Button>
                     </div>
                   </div>
@@ -361,46 +459,42 @@ const App: React.FC = () => {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg font-medium">Click to upload or drag video here</p>
-                <p className="text-sm opacity-60">Supports MP4, WebM, MOV</p>
+                <p className="text-lg font-medium">{t.uploadPrompt}</p>
+                <p className="text-sm opacity-60">{t.uploadSub}</p>
               </div>
             )}
           </div>
 
-          {/* Gallery Section - Below Player on Large Screens */}
           <div className="flex-1 min-h-[300px]">
             <FrameGallery 
               frames={frames} 
               settings={settings}
               onRemove={(id) => setFrames(prev => prev.filter(f => f.id !== id))}
               onClearAll={() => setFrames([])}
+              t={t}
             />
           </div>
         </div>
 
-        {/* Right Column: Settings (4 cols) */}
         <div className="lg:col-span-4 flex flex-col">
           <SettingsPanel 
             settings={settings} 
             onChange={setSettings} 
             count={frames.length}
+            t={t}
           />
           
-          {/* Instructions / Info */}
           <div className="mt-6 p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-2">Pro Tips:</h4>
+            <h4 className="text-sm font-semibold text-slate-300 mb-2">{t.tipsTitle}</h4>
             <ul className="text-xs text-slate-400 space-y-1.5 list-disc pl-4">
-              <li>Use <strong>Batch Extract</strong> to automatically capture frames.</li>
-              <li>The <strong>Export All</strong> preset tries to capture every frame (30fps) while skipping duplicates.</li>
-              <li>Adjust "Resolution Scale" to reduce file size before export.</li>
-              <li>WebP format offers better compression than JPEG.</li>
+              <li dangerouslySetInnerHTML={{__html: t.tip1}} />
+              <li>{t.tip2}</li>
+              <li>{t.tip3}</li>
             </ul>
           </div>
         </div>
-
       </main>
 
-      {/* Modals */}
       <AutoCaptureModal 
         isOpen={isAutoCaptureModalOpen}
         onClose={() => setIsAutoCaptureModalOpen(false)}
@@ -408,6 +502,9 @@ const App: React.FC = () => {
         duration={duration}
         isProcessing={isAutoCapturing}
         progress={autoCaptureProgress}
+        currentCount={autoCaptureCount}
+        detectedFps={detectedFps || undefined}
+        t={t}
       />
     </div>
   );

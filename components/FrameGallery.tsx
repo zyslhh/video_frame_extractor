@@ -3,26 +3,29 @@ import { CapturedFrame, ExportSettings } from '../types';
 import { formatTime, downloadSingle } from '../utils';
 import { Download, Trash2, Maximize2 } from 'lucide-react';
 import { Button } from './Button';
+import { translations } from '../i18n';
 
 interface FrameGalleryProps {
   frames: CapturedFrame[];
   settings: ExportSettings;
   onRemove: (id: string) => void;
   onClearAll: () => void;
+  t: typeof translations.en;
 }
 
 export const FrameGallery: React.FC<FrameGalleryProps> = ({ 
   frames, 
   settings, 
   onRemove,
-  onClearAll
+  onClearAll,
+  t
 }) => {
   if (frames.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-700 rounded-xl bg-surface/30">
         <Maximize2 className="w-12 h-12 mb-4 opacity-50" />
-        <p className="text-lg font-medium">No frames captured yet</p>
-        <p className="text-sm">Play the video and click 'Capture Frame'</p>
+        <p className="text-lg font-medium">{t.emptyGallery}</p>
+        <p className="text-sm">{t.emptyGalleryHelp}</p>
       </div>
     );
   }
@@ -30,9 +33,9 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({
   return (
     <div className="bg-surface rounded-xl border border-slate-700 flex flex-col h-full">
       <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-        <h3 className="font-semibold text-white">Gallery ({frames.length})</h3>
+        <h3 className="font-semibold text-white">{t.galleryTitle} ({frames.length})</h3>
         <Button variant="ghost" size="sm" onClick={onClearAll} className="text-red-400 hover:text-red-300 hover:bg-red-900/20">
-          Clear All
+          {t.clearAll}
         </Button>
       </div>
       
@@ -52,14 +55,14 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({
                   <button 
                     onClick={() => downloadSingle(frame, settings)}
                     className="p-2 bg-primary text-white rounded-full hover:bg-blue-600 transition-colors"
-                    title="Download this frame"
+                    title="Download"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                   <button 
                     onClick={() => onRemove(frame.id)}
                     className="p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
-                    title="Remove frame"
+                    title="Remove"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
